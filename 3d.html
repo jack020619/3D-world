@@ -151,7 +151,9 @@
           float cityMask = smoothstep(0.25, 0.45, lum);
           vec3 cities = lights * cityMask * 1.8 * (1.0 - dayAmount);
 
-          vec3 nightColor = surface * 0.05 + cities;
+          // Faint moonlit surface so the dark side's continents stay visible
+          // (this is the smooth day photo dimmed — no tiling).
+          vec3 nightColor = surface * 0.15 * vec3(0.85, 0.9, 1.05) + cities;
           vec3 dayColor = surface;
 
           vec3 color = mix(nightColor, dayColor, dayAmount);
