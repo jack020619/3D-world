@@ -126,6 +126,15 @@
         float hash(vec2 p) {
           return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453);
         }
+        // Smooth value noise — interpolated, so there are no hard cell edges
+        // (a raw floor()-grid hash is what made the dark side look tiled).
+        float vnoise(vec2 p) {
+          vec2 i = floor(p), f = fract(p);
+          f = f * f * (3.0 - 2.0 * f);
+          float a = hash(i), b = hash(i + vec2(1.0, 0.0));
+          float c = hash(i + vec2(0.0, 1.0)), d = hash(i + vec2(1.0, 1.0));
+          return mix(mix(a, b, f.x), mix(c, d, f.x), f.y);
+        }
 
         void main() {
           vec3 normal = normalize(vNormalW);
@@ -135,12 +144,12 @@
           vec3 surface = texture2D(dayTexture, vUv).rgb;
           vec3 lights = texture2D(nightTexture, vUv).rgb;
 
-          // Twinkle ONLY the bright city pixels and leave the rest of the
-          // surface perfectly steady, so the dark side never shimmers in tiles.
+          // Twinkle ONLY the bright city cores; faint land glow and everything
+          // else stays perfectly steady. Smooth-noise phase = no square tiles.
           float lum = max(lights.r, max(lights.g, lights.b));
-          float cityMask = smoothstep(0.06, 0.20, lum);   // 0 = dark land, 1 = bright city
-          float phase = hash(floor(vUv * 260.0)) * 6.2831; // per-city random phase
-          float twinkle = 0.6 + 0.4 * sin(uTime * 2.5 + phase);
+          float cityMask = smoothstep(0.22, 0.5, lum);     // only bright cities
+          float phase = vnoise(vUv * 45.0) * 6.2831;       // smoothly varying phase
+          float twinkle = 0.6 + 0.4 * sin(uTime * 2.2 + phase);
           lights *= mix(1.0, twinkle, cityMask);
 
           // Night side stays dark with glowing (flickering) cities that fade as
