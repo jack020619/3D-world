@@ -39,6 +39,24 @@
       margin: 0;
       color: #94a3b8;
     }
+
+    #tooltip {
+      position: fixed;
+      pointer-events: none;
+      z-index: 20;
+      display: none;
+      transform: translate(16px, 16px);
+      background: rgba(5,7,15,0.92);
+      border: 1px solid #334155;
+      border-radius: 8px;
+      padding: 8px 12px;
+      font-size: 0.85rem;
+      color: #e2e8f0;
+      min-width: 150px;
+      box-shadow: 0 6px 20px rgba(0,0,0,0.5);
+    }
+    #tooltip .c-name { font-weight: 600; margin-bottom: 3px; }
+    #tooltip .c-row { color: #94a3b8; font-size: 0.78rem; line-height: 1.4; }
   </style>
 </head>
 <body>
@@ -48,6 +66,7 @@
   </div>
 
   <div id="earth-container"></div>
+  <div id="tooltip"></div>
 
   <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
 
@@ -443,6 +462,177 @@
     dom.addEventListener("pointerup", endDrag);
     dom.addEventListener("pointercancel", endDrag);
 
+    // ===== Hover a country: highlight its border + show name/capital/time =====
+    const tooltip = document.getElementById("tooltip");
+    const raycaster = new THREE.Raycaster();
+    const ndc = new THREE.Vector2();
+    let hoveringGlobe = false;     // pauses auto-rotation while true
+    let countryFeatures = [];      // [{ name, polys, bbox }]
+    const capitalByName = {};      // normalised country name -> capital city
+    let currentCountry = null;     // name of the highlighted country
+    let borderLines = null;        // THREE.Group of the current border
+    let hoverLng = null;           // longitude under cursor (for live time)
+
+    const normName = (s) => s.toLowerCase().replace(/[^a-z]/g, "");
+    // Bridge the few names that differ between the two datasets.
+    const ALIAS = {
+      unitedstatesofamerica: "unitedstates",
+      unitedrepublicoftanzania: "tanzania",
+      republicofserbia: "serbia",
+      republicofthecongo: "congo",
+      czechia: "czechrepublic",
+      macedonia: "macedonia",
+      lao: "laos",
+      syrianarabrepublic: "syria",
+      bruneidarussalam: "brunei"
+    };
+    const capLookup = (name) => {
+      const n = normName(name);
+      return capitalByName[n] || capitalByName[ALIAS[n] || ""] || "—";
+    };
+
+    // Load capitals (keyed by country name).
+    fetch("https://cdn.jsdelivr.net/gh/samayo/country-json@master/src/country-by-capital-city.json")
+      .then((r) => r.json())
+      .then((list) => list.forEach((o) => { capitalByName[normName(o.country)] = o.city; }))
+      .catch(() => {});
+
+    // Load country borders and pre-compute a bounding box for fast hit-testing.
+    fetch("https://cdn.jsdelivr.net/gh/johan/world.geo.json@master/countries.geo.json")
+      .then((r) => r.json())
+      .then((gj) => {
+        countryFeatures = gj.features.map((f) => {
+          const polys = [];
+          const g = f.geometry;
+          if (g.type === "Polygon") polys.push(g.coordinates);
+          else if (g.type === "MultiPolygon") g.coordinates.forEach((p) => polys.push(p));
+          let minLng = 180, minLat = 90, maxLng = -180, maxLat = -90;
+          polys.forEach((rings) => rings[0].forEach(([lng, lat]) => {
+            if (lng < minLng) minLng = lng;
+            if (lng > maxLng) maxLng = lng;
+            if (lat < minLat) minLat = lat;
+            if (lat > maxLat) maxLat = lat;
+          }));
+          return { name: f.properties.name, polys, bbox: [minLng, minLat, maxLng, maxLat] };
+        });
+      })
+      .catch(() => {});
+
+    // Raycast the mouse onto the globe and return the lat/lng under it.
+    function pickLatLng(clientX, clientY) {
+      const rect = dom.getBoundingClientRect();
+      ndc.x = ((clientX - rect.left) / rect.width) * 2 - 1;
+      ndc.y = -((clientY - rect.top) / rect.height) * 2 + 1;
+      raycaster.setFromCamera(ndc, camera);
+      const hits = raycaster.intersectObject(earth, false);
+      if (!hits.length) return null;
+      const p = earth.worldToLocal(hits[0].point.clone()).normalize();
+      const lat = 90 - Math.acos(p.y) * 180 / Math.PI;
+      let lng = Math.atan2(p.z, -p.x) * 180 / Math.PI - 180;
+      if (lng < -180) lng += 360;
+      if (lng > 180) lng -= 360;
+      return { lat, lng };
+    }
+
+    // Even-odd ray-casting point-in-polygon test.
+    function pointInRing(lng, lat, ring) {
+      let inside = false;
+      for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+        const xi = ring[i][0], yi = ring[i][1], xj = ring[j][0], yj = ring[j][1];
+        if (((yi > lat) !== (yj > lat)) && (lng < (xj - xi) * (lat - yi) / (yj - yi) + xi)) {
+          inside = !inside;
+        }
+      }
+      return inside;
+    }
+    function findCountry(lng, lat) {
+      for (const f of countryFeatures) {
+        const b = f.bbox;
+        if (lng < b[0] || lng > b[2] || lat < b[1] || lat > b[3]) continue;
+        for (const rings of f.polys) {
+          if (pointInRing(lng, lat, rings[0])) {
+            let inHole = false;
+            for (let h = 1; h < rings.length; h++) {
+              if (pointInRing(lng, lat, rings[h])) { inHole = true; break; }
+            }
+            if (!inHole) return f;
+          }
+        }
+      }
+      return null;
+    }
+
+    function buildBorder(f) {
+      const group = new THREE.Group();
+      const mat = new THREE.LineBasicMaterial({
+        color: 0xffe066, transparent: true, opacity: 0.95, depthWrite: false
+      });
+      f.polys.forEach((rings) => rings.forEach((ring) => {
+        const pts = ring.map(([lng, lat]) => latLngToVector3(lat, lng, 1.003));
+        group.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts), mat));
+      }));
+      return group;
+    }
+    function clearBorder() {
+      if (borderLines) {
+        globe.remove(borderLines);
+        borderLines.traverse((o) => { if (o.geometry) o.geometry.dispose(); });
+        borderLines = null;
+      }
+      currentCountry = null;
+    }
+
+    // Approximate local clock time from longitude (rounded to the nearest hour).
+    function localTimeStr(lng) {
+      const now = new Date();
+      const utcMs = now.getTime() + now.getTimezoneOffset() * 60000;
+      const offsetH = Math.round(lng / 15);
+      const d = new Date(utcMs + offsetH * 3600000);
+      const hh = String(d.getHours()).padStart(2, "0");
+      const mm = String(d.getMinutes()).padStart(2, "0");
+      return `${hh}:${mm} (UTC${offsetH >= 0 ? "+" : ""}${offsetH})`;
+    }
+
+    function hideHover() {
+      hoveringGlobe = false;
+      hoverLng = null;
+      tooltip.style.display = "none";
+      clearBorder();
+    }
+
+    dom.addEventListener("pointermove", (e) => {
+      if (isDragging) { hideHover(); return; }
+      const ll = pickLatLng(e.clientX, e.clientY);
+      if (!ll) { hideHover(); return; }
+      hoveringGlobe = true; // over the globe -> pause auto-rotation
+      const f = findCountry(ll.lng, ll.lat);
+      if (!f) { hoverLng = null; tooltip.style.display = "none"; clearBorder(); return; }
+
+      if (f.name !== currentCountry) {
+        clearBorder();
+        currentCountry = f.name;
+        borderLines = buildBorder(f);
+        globe.add(borderLines);
+      }
+      hoverLng = ll.lng;
+      tooltip.innerHTML =
+        `<div class="c-name">${f.name}</div>` +
+        `<div class="c-row">Capital: ${capLookup(f.name)}</div>` +
+        `<div class="c-row">Local time: <span id="c-time">${localTimeStr(ll.lng)}</span></div>`;
+      tooltip.style.left = e.clientX + "px";
+      tooltip.style.top = e.clientY + "px";
+      tooltip.style.display = "block";
+    });
+    dom.addEventListener("pointerleave", hideHover);
+
+    // Keep the displayed time ticking while the cursor sits still.
+    setInterval(() => {
+      if (tooltip.style.display === "block" && hoverLng !== null) {
+        const el = document.getElementById("c-time");
+        if (el) el.textContent = localTimeStr(hoverLng);
+      }
+    }, 1000);
+
     function animate() {
       requestAnimationFrame(animate);
 
@@ -457,7 +647,7 @@
         velY *= DAMPING;
         if (Math.abs(velX) < 0.0008) velX = 0;
         if (Math.abs(velY) < 0.0008) velY = 0;
-        globe.rotation.y += 0.0006; // gentle auto-rotate
+        if (!hoveringGlobe) globe.rotation.y += 0.0006; // auto-rotate, paused on hover
       }
 
       // Clamp the tilt so you can't flip the globe upside-down.
