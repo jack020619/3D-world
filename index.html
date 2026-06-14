@@ -98,8 +98,7 @@
     const earthMaterial = new THREE.ShaderMaterial({
       uniforms: {
         dayTexture: { value: dayMap },
-        nightTexture: { value: nightMap },
-        sunDirection: { value: SUN_DIRECTION }
+        nightTexture: { value: nightMap }
       },
       vertexShader: `
         varying vec2 vUv;
@@ -115,20 +114,15 @@
       fragmentShader: `
         uniform sampler2D dayTexture;
         uniform sampler2D nightTexture;
-        uniform vec3 sunDirection;
         varying vec2 vUv;
-        varying vec3 vNormalW;
         void main() {
-          vec3 normal = normalize(vNormalW);
-          float sun = dot(normal, normalize(sunDirection));
-          float dayAmount = smoothstep(-0.12, 0.25, sun);
+          // Night-time Earth everywhere ("Black Marble"): a dim, cool, moonlit
+          // surface with warm city lights glowing across the continents.
+          vec3 surface = texture2D(dayTexture, vUv).rgb;
+          vec3 lights = texture2D(nightTexture, vUv).rgb;
 
-          vec3 dayColor = texture2D(dayTexture, vUv).rgb;
-          vec3 nightColor = texture2D(nightTexture, vUv).rgb;
-
-          // Blend the sunlit day side into the city-lit night side. No specular
-          // glint — that glossy highlight made the planet look like plastic.
-          vec3 color = mix(nightColor * 1.5, dayColor, dayAmount);
+          vec3 base = surface * 0.10 * vec3(0.65, 0.8, 1.1); // faint moonlit land/ocean
+          vec3 color = base + lights * 1.7;                  // glowing cities
           gl_FragColor = vec4(color, 1.0);
         }
       `
