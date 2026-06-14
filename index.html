@@ -135,11 +135,13 @@
           vec3 surface = texture2D(dayTexture, vUv).rgb;
           vec3 lights = texture2D(nightTexture, vUv).rgb;
 
-          // Living-city flicker: neighbourhoods pulse slowly out of phase, with
-          // a faster sparkle layered on top, so lights go bright and dark.
-          float slow = 0.65 + 0.35 * sin(uTime * 1.8 + hash(floor(vUv * 200.0)) * 6.2831);
-          float fast = 0.80 + 0.20 * sin(uTime * 6.5 + hash(floor(vUv * 520.0)) * 6.2831);
-          lights *= slow * fast;
+          // Twinkle ONLY the bright city pixels and leave the rest of the
+          // surface perfectly steady, so the dark side never shimmers in tiles.
+          float lum = max(lights.r, max(lights.g, lights.b));
+          float cityMask = smoothstep(0.06, 0.20, lum);   // 0 = dark land, 1 = bright city
+          float phase = hash(floor(vUv * 260.0)) * 6.2831; // per-city random phase
+          float twinkle = 0.6 + 0.4 * sin(uTime * 2.5 + phase);
+          lights *= mix(1.0, twinkle, cityMask);
 
           // Night side stays dark with glowing (flickering) cities that fade as
           // daylight grows; day side shows the full sunlit surface. Nothing else
