@@ -98,7 +98,8 @@
     const earthMaterial = new THREE.ShaderMaterial({
       uniforms: {
         dayTexture: { value: dayMap },
-        nightTexture: { value: nightMap }
+        nightTexture: { value: nightMap },
+        uTime: { value: 0 }
       },
       vertexShader: `
         varying vec2 vUv;
@@ -114,15 +115,28 @@
       fragmentShader: `
         uniform sampler2D dayTexture;
         uniform sampler2D nightTexture;
+        uniform float uTime;
         varying vec2 vUv;
+
+        // Cheap hash giving each map cell its own random phase.
+        float hash(vec2 p) {
+          return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453);
+        }
+
         void main() {
           // Night-time Earth everywhere ("Black Marble"): a dim, cool, moonlit
           // surface with warm city lights glowing across the continents.
           vec3 surface = texture2D(dayTexture, vUv).rgb;
           vec3 lights = texture2D(nightTexture, vUv).rgb;
 
+          // Living-city flicker: neighbourhoods pulse slowly out of phase, with
+          // a faster sparkle layered on top, so lights go bright and dark.
+          float slow = 0.65 + 0.35 * sin(uTime * 1.8 + hash(floor(vUv * 200.0)) * 6.2831);
+          float fast = 0.80 + 0.20 * sin(uTime * 6.5 + hash(floor(vUv * 520.0)) * 6.2831);
+          lights *= slow * fast;
+
           vec3 base = surface * 0.10 * vec3(0.65, 0.8, 1.1); // faint moonlit land/ocean
-          vec3 color = base + lights * 1.7;                  // glowing cities
+          vec3 color = base + lights * 1.7;                  // glowing, flickering cities
           gl_FragColor = vec4(color, 1.0);
         }
       `
@@ -411,6 +425,9 @@
 
     function animate() {
       requestAnimationFrame(animate);
+
+      // Drive the city-light flicker.
+      earthMaterial.uniforms.uTime.value = performance.now() * 0.001;
 
       if (!isDragging) {
         // Inertia: keep spinning from the last drag, then settle into a slow idle spin.
