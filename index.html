@@ -71,6 +71,8 @@
   <div id="tooltip"></div>
 
   <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+  <!-- Maps a lat/lng to its IANA timezone, so the displayed time is DST-aware. -->
+  <script src="https://cdn.jsdelivr.net/npm/tz-lookup/tz.js"></script>
 
   <script>
     const container = document.getElementById("earth-container");
@@ -480,6 +482,7 @@
     const capitalByName = {};      // normalised country name -> capital city
     let currentCountry = null;     // name of the highlighted country
     let borderLines = null;        // THREE.Group of the current border
+    let hoverLat = null;           // latitude under cursor (for live time)
     let hoverLng = null;           // longitude under cursor (for live time)
 
     const normName = (s) => s.toLowerCase().replace(/[^a-z]/g, "");
@@ -591,8 +594,20 @@
       currentCountry = null;
     }
 
-    // Approximate local clock time from longitude (rounded to the nearest hour).
-    function localTimeStr(lng) {
+    // Accurate, DST-aware local time from the real IANA timezone at this point.
+    function localTimeStr(lat, lng) {
+      try {
+        if (typeof tzlookup === "function") {
+          const tz = tzlookup(lat, lng);
+          const parts = new Intl.DateTimeFormat("en-GB", {
+            timeZone: tz, hour: "2-digit", minute: "2-digit",
+            hour12: false, timeZoneName: "shortOffset"
+          }).formatToParts(new Date());
+          const get = (t) => (parts.find((p) => p.type === t) || {}).value || "";
+          return `${get("hour")}:${get("minute")} (${get("timeZoneName")})`;
+        }
+      } catch (e) { /* fall through to the longitude estimate */ }
+      // Fallback: approximate from longitude (rounded to the nearest hour).
       const now = new Date();
       const utcMs = now.getTime() + now.getTimezoneOffset() * 60000;
       const offsetH = Math.round(lng / 15);
@@ -604,6 +619,7 @@
 
     function hideHover() {
       hoveringGlobe = false;
+      hoverLat = null;
       hoverLng = null;
       tooltip.style.display = "none";
       clearBorder();
@@ -623,11 +639,12 @@
         borderLines = buildBorder(f);
         globe.add(borderLines);
       }
+      hoverLat = ll.lat;
       hoverLng = ll.lng;
       tooltip.innerHTML =
         `<div class="c-name">${f.name}</div>` +
         `<div class="c-row">Capital: ${capLookup(f.name)}</div>` +
-        `<div class="c-row">Local time: <span id="c-time">${localTimeStr(ll.lng)}</span></div>`;
+        `<div class="c-row">Local time: <span id="c-time">${localTimeStr(ll.lat, ll.lng)}</span></div>`;
       tooltip.style.left = e.clientX + "px";
       tooltip.style.top = e.clientY + "px";
       tooltip.style.display = "block";
@@ -638,7 +655,7 @@
     setInterval(() => {
       if (tooltip.style.display === "block" && hoverLng !== null) {
         const el = document.getElementById("c-time");
-        if (el) el.textContent = localTimeStr(hoverLng);
+        if (el) el.textContent = localTimeStr(hoverLat, hoverLng);
       }
     }, 1000);
 
