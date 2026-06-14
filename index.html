@@ -95,20 +95,20 @@
     // left half night. The Earth spins underneath this fixed sun.
     const SUN_DIRECTION = new THREE.Vector3(1.0, 0.0, 0.0).normalize();
 
-    // Real NASA imagery from three.js's texture set, served by jsDelivr with
-    // CORS headers so it loads even from a local file:// page.
-    const TEX_BASE =
-      "https://cdn.jsdelivr.net/gh/mrdoob/three.js@r128/examples/textures/planets/";
+    // High-res 4K NASA imagery (4096x2048) from the three-globe asset set,
+    // served with CORS headers so it loads on the live site. Max anisotropic
+    // filtering keeps it sharp when you zoom in at a grazing angle.
     const loader = new THREE.TextureLoader();
     loader.setCrossOrigin("anonymous");
-    const load = (file) => {
-      const t = loader.load(TEX_BASE + file);
-      t.anisotropy = 8;
+    const maxAniso = renderer.capabilities.getMaxAnisotropy();
+    const load = (url) => {
+      const t = loader.load(url);
+      t.anisotropy = maxAniso;
       return t;
     };
 
-    const dayMap = load("earth_atmos_2048.jpg");
-    const nightMap = load("earth_lights_2048.png");
+    const dayMap = load("https://unpkg.com/three-globe/example/img/earth-blue-marble.jpg");
+    const nightMap = load("https://unpkg.com/three-globe/example/img/earth-night.jpg");
 
     // This group holds the Earth so dragging spins it.
     const globe = new THREE.Group();
@@ -468,7 +468,7 @@
     dom.addEventListener("wheel", (e) => {
       e.preventDefault();
       const next = camera.position.z + e.deltaY * 0.002;
-      camera.position.z = Math.max(1.5, Math.min(8, next));
+      camera.position.z = Math.max(1.25, Math.min(8, next));
     }, { passive: false });
 
     // ===== Hover a country: highlight its border + show name/capital/time =====
