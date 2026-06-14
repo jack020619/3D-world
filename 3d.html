@@ -144,19 +144,14 @@
           vec3 surface = texture2D(dayTexture, vUv).rgb;
           vec3 lights = texture2D(nightTexture, vUv).rgb;
 
-          // Twinkle ONLY the bright city cores; faint land glow and everything
-          // else stays perfectly steady. Smooth-noise phase = no square tiles.
+          // Show ONLY the bright city cores. Dropping the faint background glow
+          // removes the blocky/tiled look in the dark areas. Lights are steady —
+          // nothing animates, the planet is simply shown as-is.
           float lum = max(lights.r, max(lights.g, lights.b));
-          float cityMask = smoothstep(0.22, 0.5, lum);     // only bright cities
-          float phase = vnoise(vUv * 45.0) * 6.2831;       // smoothly varying phase
-          float twinkle = 0.6 + 0.4 * sin(uTime * 2.2 + phase);
-          lights *= mix(1.0, twinkle, cityMask);
+          float cityMask = smoothstep(0.25, 0.45, lum);
+          vec3 cities = lights * cityMask * 1.8 * (1.0 - dayAmount);
 
-          // Night side stays dark with glowing (flickering) cities that fade as
-          // daylight grows; day side shows the full sunlit surface. Nothing else
-          // about the planet changes — only the city lights animate.
-          vec3 cities = lights * 1.7 * (1.0 - dayAmount);
-          vec3 nightColor = surface * 0.04 + cities;
+          vec3 nightColor = surface * 0.05 + cities;
           vec3 dayColor = surface;
 
           vec3 color = mix(nightColor, dayColor, dayAmount);
