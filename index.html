@@ -87,7 +87,6 @@
 
     const dayMap = load("earth_atmos_2048.jpg");
     const nightMap = load("earth_lights_2048.png");
-    const specMap = load("earth_specular_2048.jpg"); // bright where there's water
 
     // This group holds the Earth so dragging spins it.
     const globe = new THREE.Group();
@@ -100,7 +99,6 @@
       uniforms: {
         dayTexture: { value: dayMap },
         nightTexture: { value: nightMap },
-        specularTexture: { value: specMap },
         sunDirection: { value: SUN_DIRECTION }
       },
       vertexShader: `
@@ -117,11 +115,9 @@
       fragmentShader: `
         uniform sampler2D dayTexture;
         uniform sampler2D nightTexture;
-        uniform sampler2D specularTexture;
         uniform vec3 sunDirection;
         varying vec2 vUv;
         varying vec3 vNormalW;
-        varying vec3 vPositionW;
         void main() {
           vec3 normal = normalize(vNormalW);
           float sun = dot(normal, normalize(sunDirection));
@@ -130,14 +126,9 @@
           vec3 dayColor = texture2D(dayTexture, vUv).rgb;
           vec3 nightColor = texture2D(nightTexture, vUv).rgb;
 
-          // Sun glint on water (specular map is bright over oceans).
-          float ocean = texture2D(specularTexture, vUv).r;
-          vec3 viewDir = normalize(cameraPosition - vPositionW);
-          vec3 reflectDir = reflect(-normalize(sunDirection), normal);
-          float glint = pow(max(dot(viewDir, reflectDir), 0.0), 24.0) * ocean * dayAmount;
-
+          // Blend the sunlit day side into the city-lit night side. No specular
+          // glint — that glossy highlight made the planet look like plastic.
           vec3 color = mix(nightColor * 1.5, dayColor, dayAmount);
-          color += vec3(0.6, 0.7, 0.8) * glint;
           gl_FragColor = vec4(color, 1.0);
         }
       `
