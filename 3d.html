@@ -141,10 +141,11 @@
           float fast = 0.80 + 0.20 * sin(uTime * 6.5 + hash(floor(vUv * 520.0)) * 6.2831);
           lights *= slow * fast;
 
-          // Night side: faint moonlit surface + glowing cities (which fade out
-          // as daylight grows). Day side: the full sunlit surface.
-          vec3 nightColor = surface * 0.09 * vec3(0.6, 0.75, 1.1)
-                          + lights * 1.7 * (1.0 - dayAmount);
+          // Night side stays dark with glowing (flickering) cities that fade as
+          // daylight grows; day side shows the full sunlit surface. Nothing else
+          // about the planet changes — only the city lights animate.
+          vec3 cities = lights * 1.7 * (1.0 - dayAmount);
+          vec3 nightColor = surface * 0.04 + cities;
           vec3 dayColor = surface;
 
           vec3 color = mix(nightColor, dayColor, dayAmount);
