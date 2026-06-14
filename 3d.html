@@ -1,0 +1,479 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Jack - 3D Earth</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <style>
+    body {
+      margin: 0;
+      background: #05070f;
+      overflow: hidden;
+      font-family: "Inter", sans-serif;
+      color: #e2e8f0;
+    }
+
+    #earth-container {
+      width: 100vw;
+      height: 100vh;
+    }
+
+    .overlay {
+      position: fixed;
+      top: 20px;
+      left: 20px;
+      z-index: 10;
+      background: rgba(5,7,15,0.8);
+      padding: 12px 16px;
+      border-radius: 10px;
+      border: 1px solid #1e293b;
+      font-size: 0.9rem;
+    }
+
+    .overlay h1 {
+      margin: 0 0 4px;
+      font-size: 1.1rem;
+    }
+
+    .overlay p {
+      margin: 0;
+      color: #94a3b8;
+    }
+  </style>
+</head>
+<body>
+  <div class="overlay">
+    <h1>Jack — Web Developer</h1>
+    <p>A connected world — drag the Earth to explore the network.</p>
+  </div>
+
+  <div id="earth-container"></div>
+
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+
+  <script>
+    const container = document.getElementById("earth-container");
+
+    const scene = new THREE.Scene();
+
+    const camera = new THREE.PerspectiveCamera(
+      50,
+      window.innerWidth / window.innerHeight,
+      0.1,
+      1000
+    );
+    camera.position.z = 3;
+
+    const renderer = new THREE.WebGLRenderer({ antialias: true });
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    container.appendChild(renderer.domElement);
+
+    // Direction the sunlight comes from (world space). Drives the day/night
+    // terminator on the Earth shader and the atmosphere glow.
+    const SUN_DIRECTION = new THREE.Vector3(1.0, 0.25, 0.7).normalize();
+
+    // Real NASA imagery from three.js's texture set, served by jsDelivr with
+    // CORS headers so it loads even from a local file:// page.
+    const TEX_BASE =
+      "https://cdn.jsdelivr.net/gh/mrdoob/three.js@r128/examples/textures/planets/";
+    const loader = new THREE.TextureLoader();
+    loader.setCrossOrigin("anonymous");
+    const load = (file) => {
+      const t = loader.load(TEX_BASE + file);
+      t.anisotropy = 8;
+      return t;
+    };
+
+    const dayMap = load("earth_atmos_2048.jpg");
+    const nightMap = load("earth_lights_2048.png");
+    const specMap = load("earth_specular_2048.jpg"); // bright where there's water
+
+    // This group holds the Earth so dragging spins it.
+    const globe = new THREE.Group();
+    scene.add(globe);
+
+    // --- Earth: custom shader blends a sunlit day side into a city-lit night
+    //     side across a soft terminator, with sun glint on the oceans. ---
+    const earthGeometry = new THREE.SphereGeometry(1, 96, 96);
+    const earthMaterial = new THREE.ShaderMaterial({
+      uniforms: {
+        dayTexture: { value: dayMap },
+        nightTexture: { value: nightMap },
+        specularTexture: { value: specMap },
+        sunDirection: { value: SUN_DIRECTION }
+      },
+      vertexShader: `
+        varying vec2 vUv;
+        varying vec3 vNormalW;
+        varying vec3 vPositionW;
+        void main() {
+          vUv = uv;
+          vNormalW = normalize(mat3(modelMatrix) * normal);
+          vPositionW = (modelMatrix * vec4(position, 1.0)).xyz;
+          gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+        }
+      `,
+      fragmentShader: `
+        uniform sampler2D dayTexture;
+        uniform sampler2D nightTexture;
+        uniform sampler2D specularTexture;
+        uniform vec3 sunDirection;
+        varying vec2 vUv;
+        varying vec3 vNormalW;
+        varying vec3 vPositionW;
+        void main() {
+          vec3 normal = normalize(vNormalW);
+          float sun = dot(normal, normalize(sunDirection));
+          float dayAmount = smoothstep(-0.12, 0.25, sun);
+
+          vec3 dayColor = texture2D(dayTexture, vUv).rgb;
+          vec3 nightColor = texture2D(nightTexture, vUv).rgb;
+
+          // Sun glint on water (specular map is bright over oceans).
+          float ocean = texture2D(specularTexture, vUv).r;
+          vec3 viewDir = normalize(cameraPosition - vPositionW);
+          vec3 reflectDir = reflect(-normalize(sunDirection), normal);
+          float glint = pow(max(dot(viewDir, reflectDir), 0.0), 24.0) * ocean * dayAmount;
+
+          vec3 color = mix(nightColor * 1.5, dayColor, dayAmount);
+          color += vec3(0.6, 0.7, 0.8) * glint;
+          gl_FragColor = vec4(color, 1.0);
+        }
+      `
+    });
+    const earth = new THREE.Mesh(earthGeometry, earthMaterial);
+    globe.add(earth);
+
+    // --- Global network: glowing city nodes connected by arcs with data
+    //     pulses travelling along them, like internet traffic. ---
+    const NETWORK_COLOR = 0x4cc9ff;
+
+    // Convert latitude/longitude to a point on the globe's surface.
+    function latLngToVector3(lat, lng, radius) {
+      const phi = (90 - lat) * Math.PI / 180;
+      const theta = (lng + 180) * Math.PI / 180;
+      return new THREE.Vector3(
+        -radius * Math.sin(phi) * Math.cos(theta),
+        radius * Math.cos(phi),
+        radius * Math.sin(phi) * Math.sin(theta)
+      );
+    }
+
+    const CITIES = [
+      { lat: 40.71, lng: -74.0 },   // New York
+      { lat: 51.51, lng: -0.13 },   // London
+      { lat: 35.68, lng: 139.69 },  // Tokyo
+      { lat: 1.35, lng: 103.82 },   // Singapore
+      { lat: -33.87, lng: 151.21 }, // Sydney
+      { lat: 37.77, lng: -122.42 }, // San Francisco
+      { lat: 55.75, lng: 37.62 },   // Moscow
+      { lat: 19.08, lng: 72.88 },   // Mumbai
+      { lat: -23.55, lng: -46.63 }, // São Paulo
+      { lat: 25.2, lng: 55.27 },    // Dubai
+      { lat: 30.04, lng: 31.24 },   // Cairo
+      { lat: -26.2, lng: 28.04 },   // Johannesburg
+      { lat: 48.85, lng: 2.35 },    // Paris
+      { lat: 39.9, lng: 116.4 },    // Beijing
+      { lat: 34.05, lng: -118.24 }, // Los Angeles
+      { lat: -34.6, lng: -58.38 }   // Buenos Aires
+    ];
+
+    const networkGroup = new THREE.Group();
+    globe.add(networkGroup);
+
+    // Small glowing node at each city.
+    const nodeGeo = new THREE.SphereGeometry(0.005, 12, 12);
+    const nodeMat = new THREE.MeshBasicMaterial({
+      color: 0xbfeaff,
+      transparent: true,
+      opacity: 0.85,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false
+    });
+    CITIES.forEach((c) => {
+      const node = new THREE.Mesh(nodeGeo, nodeMat);
+      node.position.copy(latLngToVector3(c.lat, c.lng, 1.004));
+      networkGroup.add(node);
+    });
+
+    // Seeded RNG so the network looks the same each load.
+    let nseed = 7;
+    const nrand = () => { nseed = (nseed * 16807) % 2147483647; return nseed / 2147483647; };
+
+    // Faint static arcs sit beneath the moving light trails.
+    const arcMat = new THREE.LineBasicMaterial({
+      color: 0x2b6c93,
+      transparent: true,
+      opacity: 0.2,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false
+    });
+
+    // Each data packet is a short comet-trail that fades out toward its tail.
+    const TRAIL_SEGMENTS = 22;
+    const TRAIL_LENGTH = 0.09;        // fraction of the arc the trail spans
+    const TRAIL_COLOR = new THREE.Color(0xaff0ff);
+    const _tmpVec = new THREE.Vector3();
+
+    const pulses = [];
+    for (let i = 0; i < 24; i++) {
+      const a = CITIES[Math.floor(nrand() * CITIES.length)];
+      const b = CITIES[Math.floor(nrand() * CITIES.length)];
+      if (a === b) continue;
+
+      const startV = latLngToVector3(a.lat, a.lng, 1.004);
+      const endV = latLngToVector3(b.lat, b.lng, 1.004);
+      const dist = startV.distanceTo(endV);
+      // Lift the arc's control point off the surface — farther cities arc higher.
+      const mid = startV.clone().add(endV).multiplyScalar(0.5)
+        .normalize().multiplyScalar(1.004 + dist * 0.45);
+      const curve = new THREE.QuadraticBezierCurve3(startV, mid, endV);
+
+      networkGroup.add(new THREE.Line(
+        new THREE.BufferGeometry().setFromPoints(curve.getPoints(64)),
+        arcMat
+      ));
+
+      // Trail geometry: positions + per-vertex colours, refreshed every frame.
+      const positions = new Float32Array((TRAIL_SEGMENTS + 1) * 3);
+      const colors = new Float32Array((TRAIL_SEGMENTS + 1) * 3);
+      const trailGeo = new THREE.BufferGeometry();
+      trailGeo.setAttribute("position", new THREE.BufferAttribute(positions, 3));
+      trailGeo.setAttribute("color", new THREE.BufferAttribute(colors, 3));
+      networkGroup.add(new THREE.Line(trailGeo, new THREE.LineBasicMaterial({
+        vertexColors: true,
+        transparent: true,
+        blending: THREE.AdditiveBlending,
+        depthWrite: false
+      })));
+
+      pulses.push({
+        curve, geo: trailGeo, positions, colors,
+        t: nrand(), speed: 0.0022 + nrand() * 0.0028
+      });
+    }
+
+    // --- Atmosphere: a back-faced fresnel shell that glows at the rim. ---
+    const atmosphere = new THREE.Mesh(
+      new THREE.SphereGeometry(1.18, 96, 96),
+      new THREE.ShaderMaterial({
+        side: THREE.BackSide,
+        blending: THREE.AdditiveBlending,
+        transparent: true,
+        depthWrite: false,
+        vertexShader: `
+          varying vec3 vNormal;
+          void main() {
+            vNormal = normalize(normalMatrix * normal);
+            gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+          }
+        `,
+        fragmentShader: `
+          varying vec3 vNormal;
+          void main() {
+            float intensity = pow(0.62 - dot(vNormal, vec3(0.0, 0.0, 1.0)), 3.0);
+            gl_FragColor = vec4(0.35, 0.6, 1.0, 1.0) * intensity;
+          }
+        `
+      })
+    );
+    scene.add(atmosphere);
+
+    // All of space (nebula + stars) lives in one group so it can drift slowly.
+    const space = new THREE.Group();
+    scene.add(space);
+
+    // --- Deep space: a faint nebula backdrop wrapped around the whole scene. ---
+    (function addNebula() {
+      const canvas = document.createElement("canvas");
+      canvas.width = 2048;
+      canvas.height = 1024;
+      const ctx = canvas.getContext("2d");
+      const w = canvas.width, h = canvas.height;
+
+      // Near-black base.
+      ctx.fillStyle = "#02030a";
+      ctx.fillRect(0, 0, w, h);
+
+      let s = 24571;
+      const rnd = () => { s = (s * 16807) % 2147483647; return s / 2147483647; };
+
+      // A few large, very soft clouds of interstellar gas.
+      const tints = [
+        [40, 70, 140], [70, 40, 120], [30, 90, 110], [90, 50, 100]
+      ];
+      for (let i = 0; i < 22; i++) {
+        const cx = rnd() * w, cy = rnd() * h;
+        const rad = 120 + rnd() * 380;
+        const c = tints[Math.floor(rnd() * tints.length)];
+        const g = ctx.createRadialGradient(cx, cy, 0, cx, cy, rad);
+        g.addColorStop(0, `rgba(${c[0]},${c[1]},${c[2]},${0.05 + rnd() * 0.06})`);
+        g.addColorStop(1, "rgba(0,0,0,0)");
+        ctx.fillStyle = g;
+        ctx.beginPath();
+        ctx.arc(cx, cy, rad, 0, Math.PI * 2);
+        ctx.fill();
+      }
+
+      // Dense field of faint pin-prick stars baked into the backdrop.
+      for (let i = 0; i < 4000; i++) {
+        const x = rnd() * w, y = rnd() * h;
+        const a = 0.2 + rnd() * 0.5;
+        ctx.fillStyle = `rgba(255,255,255,${a})`;
+        ctx.fillRect(x, y, rnd() < 0.1 ? 2 : 1, 1);
+      }
+
+      const tex = new THREE.CanvasTexture(canvas);
+      const sky = new THREE.Mesh(
+        new THREE.SphereGeometry(400, 64, 64),
+        new THREE.MeshBasicMaterial({ map: tex, side: THREE.BackSide })
+      );
+      space.add(sky);
+    })();
+
+    // --- Foreground stars: soft round points, layered by size/brightness/colour
+    //     so the sky has depth instead of a flat sheet of identical dots. ---
+    (function addStars() {
+      // Soft circular sprite so stars are round glows, not hard squares.
+      const sprite = (() => {
+        const c = document.createElement("canvas");
+        c.width = c.height = 64;
+        const g = c.getContext("2d").createRadialGradient(32, 32, 0, 32, 32, 32);
+        g.addColorStop(0, "rgba(255,255,255,1)");
+        g.addColorStop(0.25, "rgba(255,255,255,0.85)");
+        g.addColorStop(1, "rgba(255,255,255,0)");
+        const ctx = c.getContext("2d");
+        ctx.fillStyle = g;
+        ctx.fillRect(0, 0, 64, 64);
+        return new THREE.CanvasTexture(c);
+      })();
+
+      let s = 1337;
+      const rnd = () => { s = (s * 16807) % 2147483647; return s / 2147483647; };
+
+      function layer(count, size, opacity, tint) {
+        const positions = new Float32Array(count * 3);
+        for (let i = 0; i < count; i++) {
+          const r = 80 + rnd() * 200;
+          const theta = rnd() * Math.PI * 2;
+          const phi = Math.acos(2 * rnd() - 1);
+          positions[i * 3] = r * Math.sin(phi) * Math.cos(theta);
+          positions[i * 3 + 1] = r * Math.sin(phi) * Math.sin(theta);
+          positions[i * 3 + 2] = r * Math.cos(phi);
+        }
+        const geo = new THREE.BufferGeometry();
+        geo.setAttribute("position", new THREE.BufferAttribute(positions, 3));
+        space.add(new THREE.Points(geo, new THREE.PointsMaterial({
+          map: sprite,
+          size,
+          color: tint,
+          transparent: true,
+          opacity,
+          depthWrite: false,
+          blending: THREE.AdditiveBlending,
+          sizeAttenuation: true
+        })));
+      }
+
+      layer(3500, 0.7, 0.55, 0xffffff);  // distant dim field
+      layer(700, 1.4, 0.8, 0xdde8ff);    // mid, slightly blue
+      layer(140, 2.6, 1.0, 0xfff2dd);    // bright, slightly warm
+    })();
+
+
+    // --- Drag-to-rotate, implemented in code (no external OrbitControls) ---
+    let isDragging = false;
+    let lastX = 0;
+    let lastY = 0;
+    let velX = 0; // horizontal spin velocity (radians/frame)
+    let velY = 0; // vertical tilt velocity
+    const ROTATE_SPEED = 0.005;
+    const DAMPING = 0.92;      // how quickly the throw slows down
+    const MAX_TILT = Math.PI / 2 - 0.05; // don't let the poles flip over
+
+    const dom = renderer.domElement;
+    dom.style.cursor = "grab";
+
+    dom.addEventListener("pointerdown", (e) => {
+      isDragging = true;
+      lastX = e.clientX;
+      lastY = e.clientY;
+      velX = 0;
+      velY = 0;
+      dom.style.cursor = "grabbing";
+      dom.setPointerCapture(e.pointerId);
+    });
+
+    dom.addEventListener("pointermove", (e) => {
+      if (!isDragging) return;
+      const dx = e.clientX - lastX;
+      const dy = e.clientY - lastY;
+      lastX = e.clientX;
+      lastY = e.clientY;
+      velX = dx * ROTATE_SPEED;
+      velY = dy * ROTATE_SPEED;
+      globe.rotation.y += velX;
+      globe.rotation.x += velY;
+    });
+
+    const endDrag = () => {
+      isDragging = false;
+      dom.style.cursor = "grab";
+    };
+    dom.addEventListener("pointerup", endDrag);
+    dom.addEventListener("pointercancel", endDrag);
+
+    function animate() {
+      requestAnimationFrame(animate);
+
+      if (!isDragging) {
+        // Inertia: keep spinning from the last drag, then settle into a slow idle spin.
+        globe.rotation.y += velX;
+        globe.rotation.x += velY;
+        velX *= DAMPING;
+        velY *= DAMPING;
+        if (Math.abs(velX) < 0.0008) velX = 0;
+        if (Math.abs(velY) < 0.0008) velY = 0;
+        globe.rotation.y += 0.0006; // gentle auto-rotate
+      }
+
+      // Clamp the tilt so you can't flip the globe upside-down.
+      globe.rotation.x = Math.max(-MAX_TILT, Math.min(MAX_TILT, globe.rotation.x));
+
+      // Slowly drift the whole starfield for a sense of motion through space.
+      space.rotation.y += 0.00018;
+      space.rotation.x += 0.00005;
+
+      // Advance each data packet and redraw its fading comet-trail.
+      for (const p of pulses) {
+        p.t = (p.t + p.speed) % 1;
+        for (let i = 0; i <= TRAIL_SEGMENTS; i++) {
+          const frac = i / TRAIL_SEGMENTS;            // 0 = tail, 1 = head
+          let tt = p.t - (1 - frac) * TRAIL_LENGTH;
+          if (tt < 0) tt = 0;
+          p.curve.getPoint(tt, _tmpVec);
+          p.positions[i * 3] = _tmpVec.x;
+          p.positions[i * 3 + 1] = _tmpVec.y;
+          p.positions[i * 3 + 2] = _tmpVec.z;
+          const b = frac * frac;                      // brightness fades toward the tail
+          p.colors[i * 3] = TRAIL_COLOR.r * b;
+          p.colors[i * 3 + 1] = TRAIL_COLOR.g * b;
+          p.colors[i * 3 + 2] = TRAIL_COLOR.b * b;
+        }
+        p.geo.attributes.position.needsUpdate = true;
+        p.geo.attributes.color.needsUpdate = true;
+      }
+
+      renderer.render(scene, camera);
+    }
+    animate();
+
+    window.addEventListener("resize", () => {
+      camera.aspect = window.innerWidth / window.innerHeight;
+      camera.updateProjectionMatrix();
+      renderer.setSize(window.innerWidth, window.innerHeight);
+    });
+  </script>
+</body>
+</html>
