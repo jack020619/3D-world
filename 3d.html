@@ -69,9 +69,10 @@
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     container.appendChild(renderer.domElement);
 
-    // Direction the sunlight comes from (world space). Drives the day/night
-    // terminator on the Earth shader and the atmosphere glow.
-    const SUN_DIRECTION = new THREE.Vector3(1.0, 0.25, 0.7).normalize();
+    // Direction the sunlight comes from (world space). Pointing straight along
+    // +X puts the terminator down the middle of the view: right half daylit,
+    // left half night. The Earth spins underneath this fixed sun.
+    const SUN_DIRECTION = new THREE.Vector3(1.0, 0.0, 0.0).normalize();
 
     // Real NASA imagery from three.js's texture set, served by jsDelivr with
     // CORS headers so it loads even from a local file:// page.
@@ -99,6 +100,7 @@
       uniforms: {
         dayTexture: { value: dayMap },
         nightTexture: { value: nightMap },
+        sunDirection: { value: SUN_DIRECTION },
         uTime: { value: 0 }
       },
       vertexShader: `
@@ -115,8 +117,10 @@
       fragmentShader: `
         uniform sampler2D dayTexture;
         uniform sampler2D nightTexture;
+        uniform vec3 sunDirection;
         uniform float uTime;
         varying vec2 vUv;
+        varying vec3 vNormalW;
 
         // Cheap hash giving each map cell its own random phase.
         float hash(vec2 p) {
@@ -124,8 +128,10 @@
         }
 
         void main() {
-          // Night-time Earth everywhere ("Black Marble"): a dim, cool, moonlit
-          // surface with warm city lights glowing across the continents.
+          vec3 normal = normalize(vNormalW);
+          float sun = dot(normal, normalize(sunDirection));
+          float dayAmount = smoothstep(-0.12, 0.20, sun); // soft terminator
+
           vec3 surface = texture2D(dayTexture, vUv).rgb;
           vec3 lights = texture2D(nightTexture, vUv).rgb;
 
@@ -135,8 +141,13 @@
           float fast = 0.80 + 0.20 * sin(uTime * 6.5 + hash(floor(vUv * 520.0)) * 6.2831);
           lights *= slow * fast;
 
-          vec3 base = surface * 0.10 * vec3(0.65, 0.8, 1.1); // faint moonlit land/ocean
-          vec3 color = base + lights * 1.7;                  // glowing, flickering cities
+          // Night side: faint moonlit surface + glowing cities (which fade out
+          // as daylight grows). Day side: the full sunlit surface.
+          vec3 nightColor = surface * 0.09 * vec3(0.6, 0.75, 1.1)
+                          + lights * 1.7 * (1.0 - dayAmount);
+          vec3 dayColor = surface;
+
+          vec3 color = mix(nightColor, dayColor, dayAmount);
           gl_FragColor = vec4(color, 1.0);
         }
       `
