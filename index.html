@@ -42,9 +42,11 @@
       color: #94a3b8;
     }
 
-    .overlay a.map-link {
+    .overlay .map-link {
       display: inline-block;
+      cursor: pointer;
       text-decoration: none;
+      font: inherit;
       color: #e2e8f0;
       background: #0f1b2e;
       border: 1px solid #334155;
@@ -52,7 +54,7 @@
       padding: 6px 12px;
       font-size: 0.82rem;
     }
-    .overlay a.map-link:hover { background: #1e3a5f; }
+    .overlay .map-link:hover { background: #1e3a5f; }
 
     #tooltip {
       position: fixed;
@@ -80,18 +82,51 @@
       animation: hintpulse 1.6s ease-in-out infinite;
     }
     @keyframes hintpulse { 0%,100% { opacity: 0.55; } 50% { opacity: 1; } }
+
+    /* Full-screen Cesium overlay: only shown for the close-up building view. */
+    #cesiumWrap { position: fixed; inset: 0; z-index: 30; display: none; background: #000; }
+    #cesiumContainer { width: 100%; height: 100%; }
+    #cesiumLoading {
+      position: absolute; inset: 0; z-index: 2; display: none;
+      align-items: center; justify-content: center;
+      background: #05070f; color: #e2e8f0; font-size: 1rem;
+    }
+    .cesium-panel { position: absolute; top: 14px; left: 14px; z-index: 3; display: flex; flex-direction: column; gap: 8px; }
+    .cesium-cities { display: flex; flex-wrap: wrap; gap: 6px; max-width: 330px; }
+    .cesium-panel button {
+      cursor: pointer; font: inherit; font-size: 0.8rem; color: #e2e8f0;
+      border: 1px solid #334155; background: rgba(15,27,46,0.92);
+      border-radius: 6px; padding: 6px 11px;
+    }
+    .cesium-panel button:hover { background: #1e3a5f; }
+    .cesium-panel #backToGlobe { align-self: flex-start; }
   </style>
 </head>
 <body>
   <div class="overlay">
     <h1>Jack — Web Developer</h1>
     <p>A connected world — drag the Earth to explore the network.</p>
-    <a class="map-link" href="map.html">🏙️ Zoom to buildings →</a>
+    <button type="button" class="map-link" id="enterBuildings">🏙️ Zoom to buildings →</button>
   </div>
 
   <div id="earth-container"></div>
   <div id="tooltip"></div>
   <div id="zoomhint">Keep scrolling to drop into 3D buildings ↓</div>
+
+  <div id="cesiumWrap">
+    <div id="cesiumContainer"></div>
+    <div id="cesiumLoading">Loading 3D buildings…</div>
+    <div class="cesium-panel">
+      <button type="button" id="backToGlobe">← Back to globe</button>
+      <div class="cesium-cities">
+        <button type="button" data-lng="-74.0060" data-lat="40.7128">New York</button>
+        <button type="button" data-lng="-0.1276" data-lat="51.5072">London</button>
+        <button type="button" data-lng="139.6917" data-lat="35.6895">Tokyo</button>
+        <button type="button" data-lng="2.3522" data-lat="48.8566">Paris</button>
+        <button type="button" data-lng="55.2708" data-lat="25.2048">Dubai</button>
+      </div>
+    </div>
+  </div>
 
   <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
   <!-- Maps a lat/lng to its IANA timezone, so the displayed time is DST-aware. -->
@@ -99,6 +134,12 @@
 
   <script>
     const container = document.getElementById("earth-container");
+
+    // Free Cesium ion token (read-only: assets:read + geocode) for the close-up
+    // 3D building view. Lazy-loaded only when you zoom in.
+    const CESIUM_ION_TOKEN = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJqdGkiOiJmMDY4YWRmZi00ZWFhLTRjNzItOTA3My0yZDQ5NjYxZmU5MmEiLCJpZCI6NDQ0NDg2LCJpc3MiOiJodHRwczovL2FwaS5jZXNpdW0uY29tIiwiYXVkIjoidW5kZWZpbmVkX2RlZmF1bHQiLCJpYXQiOjE3ODE0ODg0MTB9.R_EQ6omqVBVvm3-4Oo9MqQ8enPHK74rdqcrSgLUVQp4";
+    let inBuildingMode = false;   // true while the Cesium close-up overlay is showing
+    let cesiumViewer = null;
 
     const scene = new THREE.Scene();
 
@@ -499,8 +540,8 @@
       if (e.deltaY < 0 && camera.position.z <= ZOOM_MIN + 0.02) {
         const r = dom.getBoundingClientRect();
         const ll = pickLatLng(r.left + r.width / 2, r.top + r.height / 2);
-        const q = ll ? `?lat=${ll.lat.toFixed(5)}&lng=${ll.lng.toFixed(5)}` : "";
-        window.location.href = "map.html" + q;
+        if (ll) enterBuildingMode(ll.lat, ll.lng);
+        else enterBuildingMode();
         return;
       }
       camera.position.z = Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, camera.position.z + e.deltaY * 0.002));
@@ -695,6 +736,7 @@
 
     function animate() {
       requestAnimationFrame(animate);
+      if (inBuildingMode) return; // globe hidden behind the Cesium overlay
 
       // Drive the city-light flicker.
       earthMaterial.uniforms.uTime.value = performance.now() * 0.001;
@@ -740,6 +782,89 @@
       renderer.render(scene, camera);
     }
     animate();
+
+    // ===== Close-up 3D buildings (Cesium), lazy-loaded into the same page =====
+    function loadCesium() {
+      return new Promise((resolve, reject) => {
+        if (window.Cesium) return resolve();
+        const css = document.createElement("link");
+        css.rel = "stylesheet";
+        css.href = "https://cdn.jsdelivr.net/npm/cesium@1.124/Build/Cesium/Widgets/widgets.css";
+        document.head.appendChild(css);
+        const s = document.createElement("script");
+        s.src = "https://cdn.jsdelivr.net/npm/cesium@1.124/Build/Cesium/Cesium.js";
+        s.onload = () => resolve();
+        s.onerror = reject;
+        document.head.appendChild(s);
+      });
+    }
+
+    async function enterBuildingMode(lat, lng) {
+      const wrap = document.getElementById("cesiumWrap");
+      const loading = document.getElementById("cesiumLoading");
+      inBuildingMode = true;
+      zoomHint.style.display = "none";
+      wrap.style.display = "block";
+      loading.style.display = "flex";
+      try {
+        await loadCesium();
+        if (!cesiumViewer) {
+          Cesium.Ion.defaultAccessToken = CESIUM_ION_TOKEN;
+          cesiumViewer = new Cesium.Viewer("cesiumContainer", {
+            terrain: Cesium.Terrain.fromWorldTerrain(),
+            baseLayerPicker: false, timeline: false, animation: false,
+            homeButton: false, sceneModePicker: false, navigationHelpButton: false,
+            fullscreenButton: false, geocoder: true, infoBox: false, selectionIndicator: false
+          });
+          cesiumViewer.scene.globe.enableLighting = true;
+          cesiumViewer.scene.screenSpaceCameraController.minimumZoomDistance = 5;
+          try {
+            cesiumViewer.scene.primitives.add(await Cesium.createOsmBuildingsAsync());
+          } catch (err) { console.warn("OSM Buildings failed:", err); }
+
+          // Zooming back out far enough returns to the artistic globe, so it
+          // always feels like ONE earth — Cesium is only for the close view.
+          cesiumViewer.camera.percentageChanged = 0.2;
+          cesiumViewer.camera.changed.addEventListener(() => {
+            if (inBuildingMode && cesiumViewer.camera.positionCartographic.height > 220000) {
+              exitBuildingMode();
+            }
+          });
+        }
+        const hasLoc = typeof lat === "number" && !isNaN(lat) &&
+                       typeof lng === "number" && !isNaN(lng);
+        cesiumViewer.camera.flyTo(hasLoc ? {
+          destination: Cesium.Cartesian3.fromDegrees(lng, lat, 3000),
+          orientation: { pitch: Cesium.Math.toRadians(-45) }, duration: 0
+        } : {
+          destination: Cesium.Cartesian3.fromDegrees(10, 25, 5000000), duration: 0
+        });
+      } catch (err) {
+        loading.textContent = "Couldn't load 3D buildings — check your connection.";
+        return;
+      }
+      loading.style.display = "none";
+    }
+
+    function exitBuildingMode() {
+      inBuildingMode = false;
+      document.getElementById("cesiumWrap").style.display = "none";
+      camera.position.z = 2.2; // pull the artistic globe back out a little
+    }
+
+    function cesiumFlyTo(lng, lat) {
+      if (!cesiumViewer) return;
+      cesiumViewer.camera.flyTo({
+        destination: Cesium.Cartesian3.fromDegrees(lng, lat, 1200),
+        orientation: { pitch: Cesium.Math.toRadians(-35) }, duration: 3
+      });
+    }
+
+    document.getElementById("enterBuildings").addEventListener("click", () => enterBuildingMode());
+    document.getElementById("backToGlobe").addEventListener("click", exitBuildingMode);
+    document.querySelectorAll("#cesiumWrap .cesium-cities button").forEach((b) => {
+      b.addEventListener("click", () => cesiumFlyTo(parseFloat(b.dataset.lng), parseFloat(b.dataset.lat)));
+    });
 
     window.addEventListener("resize", () => {
       camera.aspect = window.innerWidth / window.innerHeight;
