@@ -71,6 +71,15 @@
     }
     #tooltip .c-name { font-weight: 600; margin-bottom: 3px; }
     #tooltip .c-row { color: #94a3b8; font-size: 0.78rem; line-height: 1.4; }
+
+    #zoomhint {
+      position: fixed; bottom: 26px; left: 50%; transform: translateX(-50%);
+      z-index: 15; display: none; pointer-events: none;
+      background: rgba(5,7,15,0.85); border: 1px solid #334155; border-radius: 20px;
+      padding: 8px 16px; font-size: 0.82rem; color: #e2e8f0;
+      animation: hintpulse 1.6s ease-in-out infinite;
+    }
+    @keyframes hintpulse { 0%,100% { opacity: 0.55; } 50% { opacity: 1; } }
   </style>
 </head>
 <body>
@@ -82,6 +91,7 @@
 
   <div id="earth-container"></div>
   <div id="tooltip"></div>
+  <div id="zoomhint">Keep scrolling to drop into 3D buildings ↓</div>
 
   <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
   <!-- Maps a lat/lng to its IANA timezone, so the displayed time is DST-aware. -->
@@ -479,11 +489,22 @@
     dom.addEventListener("pointerup", endDrag);
     dom.addEventListener("pointercancel", endDrag);
 
-    // --- Scroll to zoom: move the camera in/out, clamped to a safe range. ---
+    // --- Scroll to zoom; keep scrolling in at full zoom to fly into 3D buildings. ---
+    const ZOOM_MIN = 1.25, ZOOM_MAX = 8;
+    const zoomHint = document.getElementById("zoomhint");
     dom.addEventListener("wheel", (e) => {
       e.preventDefault();
-      const next = camera.position.z + e.deltaY * 0.002;
-      camera.position.z = Math.max(1.25, Math.min(8, next));
+      // At the closest zoom, a further zoom-in flies into the Cesium 3D building
+      // map, centred on whatever is in the middle of the screen.
+      if (e.deltaY < 0 && camera.position.z <= ZOOM_MIN + 0.02) {
+        const r = dom.getBoundingClientRect();
+        const ll = pickLatLng(r.left + r.width / 2, r.top + r.height / 2);
+        const q = ll ? `?lat=${ll.lat.toFixed(5)}&lng=${ll.lng.toFixed(5)}` : "";
+        window.location.href = "map.html" + q;
+        return;
+      }
+      camera.position.z = Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, camera.position.z + e.deltaY * 0.002));
+      zoomHint.style.display = camera.position.z <= ZOOM_MIN + 0.05 ? "block" : "none";
     }, { passive: false });
 
     // ===== Hover a country: highlight its border + show name/capital/time =====

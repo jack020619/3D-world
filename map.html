@@ -111,11 +111,23 @@
           console.warn("OSM Buildings failed to load:", e);
         }
 
-        // Start with a gentle globe view, then let the user fly in.
-        viewer.camera.flyTo({
-          destination: Cesium.Cartesian3.fromDegrees(10, 25, 14000000),
-          duration: 0
-        });
+        // If we arrived from the globe ("scroll into buildings"), fly down to
+        // that exact spot; otherwise show a gentle whole-globe view.
+        const params = new URLSearchParams(location.search);
+        const qlat = parseFloat(params.get("lat"));
+        const qlng = parseFloat(params.get("lng"));
+        if (!isNaN(qlat) && !isNaN(qlng)) {
+          viewer.camera.flyTo({
+            destination: Cesium.Cartesian3.fromDegrees(qlng, qlat, 3000),
+            orientation: { pitch: Cesium.Math.toRadians(-45) },
+            duration: 2.5
+          });
+        } else {
+          viewer.camera.flyTo({
+            destination: Cesium.Cartesian3.fromDegrees(10, 25, 14000000),
+            duration: 0
+          });
+        }
 
         // "Fly to city" buttons drop the camera down among the buildings.
         function flyToCity(lng, lat) {
