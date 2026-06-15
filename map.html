@@ -14,7 +14,8 @@
     .panel {
       position: fixed; top: 14px; left: 14px; z-index: 10;
       background: rgba(5,7,15,0.82); border: 1px solid #1e293b; border-radius: 10px;
-      padding: 12px 14px; font-size: 0.9rem; max-width: 320px; backdrop-filter: blur(4px);
+      padding: 12px 14px; font-size: 0.9rem; max-width: 320px;
+      -webkit-backdrop-filter: blur(4px); backdrop-filter: blur(4px);
     }
     .panel h1 { margin: 0 0 4px; font-size: 1.05rem; }
     .panel p { margin: 0 0 10px; color: #94a3b8; font-size: 0.82rem; line-height: 1.4; }
@@ -47,11 +48,11 @@
     <h1>Jack — 3D Map</h1>
     <p>Scroll / drag to fly. Zoom all the way down to see real 3D buildings (OpenStreetMap) on satellite terrain.</p>
     <div class="cities">
-      <button data-lng="-74.0060" data-lat="40.7128">New York</button>
-      <button data-lng="-0.1276" data-lat="51.5072">London</button>
-      <button data-lng="139.6917" data-lat="35.6895">Tokyo</button>
-      <button data-lng="2.3522" data-lat="48.8566">Paris</button>
-      <button data-lng="55.2708" data-lat="25.2048">Dubai</button>
+      <button type="button" data-lng="-74.0060" data-lat="40.7128">New York</button>
+      <button type="button" data-lng="-0.1276" data-lat="51.5072">London</button>
+      <button type="button" data-lng="139.6917" data-lat="35.6895">Tokyo</button>
+      <button type="button" data-lng="2.3522" data-lat="48.8566">Paris</button>
+      <button type="button" data-lng="55.2708" data-lat="25.2048">Dubai</button>
     </div>
   </div>
   <a class="backlink" href="index.html">← Back to globe</a>
@@ -75,7 +76,7 @@
     //  PASTE YOUR FREE CESIUM ION TOKEN BETWEEN THE QUOTES BELOW.
     //  Get it at https://cesium.com/ion/signup  ->  Access Tokens.
     // ============================================================
-    const CESIUM_ION_TOKEN = "PASTE_YOUR_CESIUM_ION_TOKEN_HERE";
+    const CESIUM_ION_TOKEN = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJqdGkiOiJmMDY4YWRmZi00ZWFhLTRjNzItOTA3My0yZDQ5NjYxZmU5MmEiLCJpZCI6NDQ0NDg2LCJpc3MiOiJodHRwczovL2FwaS5jZXNpdW0uY29tIiwiYXVkIjoidW5kZWZpbmVkX2RlZmF1bHQiLCJpYXQiOjE3ODE0ODg0MTB9.R_EQ6omqVBVvm3-4Oo9MqQ8enPHK74rdqcrSgLUVQp4";
 
     if (!CESIUM_ION_TOKEN || CESIUM_ION_TOKEN.startsWith("PASTE")) {
       // No token yet — show the setup instructions instead of a broken map.
